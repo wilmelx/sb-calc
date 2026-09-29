@@ -66,6 +66,12 @@
   .note { margin-top: 14px; font-size: 13px; color: var(--muted); }
   .warn { margin-top: 12px; font-size: 13px; color: #b42318; background: #fef3f2; border: 1px solid #fecdca; border-radius: 8px; padding: 10px; text-align: left; }
   .hidden { display: none; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tabs button {
+    border: 1px solid var(--line); background: #fff; color: var(--muted);
+    border-radius: 8px; padding: 6px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .tabs button.on { background: var(--brand); border-color: var(--brand); color: #fff; }
   .foot { text-align: center; font-size: 12px; color: var(--muted); margin: 18px 0 8px; }
   .reset { background: none; border: 0; color: var(--brand); font-size: 13px; cursor: pointer; text-decoration: underline; }
 </style>
@@ -76,12 +82,30 @@
   <h1>Solarbridge Commission Calculator</h1>
   <p class="sub">Enter your deal to see your payout.</p>
 
+  <div class="tabs" id="modeTabs">
+    <button type="button" data-mode="standard" class="on">Standard</button>
+    <button type="button" data-mode="sunstone">Sunstone</button>
+  </div>
+
   <div class="card">
     <h2>Deal Information</h2>
-    <div class="row">
-      <div class="field">
+
+    <div class="toggle-row hidden" id="ssEntryRow" style="border-top:0;padding-top:0">
+      <span class="name">What do you have?</span>
+      <span class="seg" id="ssEntrySeg">
+        <button type="button" data-ss="total" class="on">Total commissions</button>
+        <button type="button" data-ss="ppw">Gross PPW</button>
+      </span>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <div class="field" id="ppwField">
         <label for="ppw">Gross PPW Sold <span class="hint">($/W)</span></label>
         <input id="ppw" type="number" inputmode="decimal" min="0" step="0.01" placeholder="4.25">
+      </div>
+      <div class="field hidden" id="ssTotalField">
+        <label for="ssTotal">Total Commissions <span class="hint">($)</span></label>
+        <input id="ssTotal" type="number" inputmode="decimal" min="0" step="0.01" placeholder="15000">
       </div>
       <div class="field">
         <label for="kw">System Size <span class="hint">(kW)</span></label>
@@ -89,20 +113,31 @@
       </div>
     </div>
     <div class="hint" id="wattsNote">&nbsp;</div>
+    <div class="hint hidden" id="ssTotalHint" style="margin-top:6px">
+      Use the total commission Sunstone gave you — adders are already taken out of it.
+    </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="addersCard">
     <h2>Adders</h2>
 
-    <div class="field">
-      <label for="pw">Tesla Powerwalls <span class="hint">(qty)</span></label>
-      <input id="pw" type="number" inputmode="numeric" min="0" step="1" value="0">
-      <div class="hint" style="margin-top:4px">First one is full price, each additional one is less.</div>
+    <div id="stdBatteries">
+      <div class="field">
+        <label for="pw">Tesla Powerwalls <span class="hint">(qty)</span></label>
+        <input id="pw" type="number" inputmode="numeric" min="0" step="1" value="0">
+        <div class="hint" style="margin-top:4px">First one is full price, each additional one is less.</div>
+      </div>
+
+      <div class="field">
+        <label for="qc">QCELLS Batteries <span class="hint">(qty)</span></label>
+        <input id="qc" type="number" inputmode="numeric" min="0" step="1" value="0">
+      </div>
     </div>
 
-    <div class="field">
-      <label for="qc">QCELLS Batteries <span class="hint">(qty)</span></label>
-      <input id="qc" type="number" inputmode="numeric" min="0" step="1" value="0">
+    <div class="field hidden" id="ssBatteryField">
+      <label for="ssBatt">Batteries <span class="hint">(qty)</span></label>
+      <input id="ssBatt" type="number" inputmode="numeric" min="0" step="1" value="0">
+      <div class="hint" style="margin-top:4px">First one is full price, each additional one is less.</div>
     </div>
 
     <div class="toggle-row">
@@ -236,10 +271,19 @@ var CONFIG = {
   POWERWALL_ADDITIONAL:  8000,
   QCELLS_BATTERY:        7900,
   QCELLS_BE_PER_W:        0.10,
-  MPU:                   4000,
+  MPU:                   3500,
   TRENCHING_PER_FT:        20,
   GROUND_MOUNT_PER_W:       1.00,
-  METER_RELOCATION:      6000
+  METER_RELOCATION:      6000,
+
+  // Sunstone tab. Their quoted total commission already has adders out, so the
+  // only deduction is the per-kW withhold. Their adder pricing differs.
+  SUNSTONE: {
+    WITHHOLD_PER_KW:     100,
+    BATTERY_FIRST:     13500,
+    BATTERY_ADDITIONAL: 11000,
+    MPU:                4000
+  }
 };
 /* ========================================================== */
 
@@ -269,11 +313,19 @@ function roleShare(role, sh) {
   return sh.closer;
 }
 
-function adderTotal(d, watts) {
-  var t = powerwallCost(d.powerwalls) +
-          Math.floor(nonNeg(d.qcellsBatteries)) * CONFIG.QCELLS_BATTERY +
+// Sunstone batteries: first at full price, every additional one cheaper.
+function sunstoneBatteryCost(n) {
+  n = Math.floor(nonNeg(n));
+  return n <= 0 ? 0 : CONFIG.SUNSTONE.BATTERY_FIRST + (n - 1) * CONFIG.SUNSTONE.BATTERY_ADDITIONAL;
+}
+
+function adderTotal(d, watts, sunstone) {
+  var batteries = sunstone
+    ? sunstoneBatteryCost(d.ssBatteries)
+    : powerwallCost(d.powerwalls) + Math.floor(nonNeg(d.qcellsBatteries)) * CONFIG.QCELLS_BATTERY;
+  var t = batteries +
           (d.qcellsBE ? watts * CONFIG.QCELLS_BE_PER_W : 0) +
-          (d.mpu ? CONFIG.MPU : 0) +
+          (d.mpu ? (sunstone ? CONFIG.SUNSTONE.MPU : CONFIG.MPU) : 0) +
           (d.trenching ? nonNeg(d.trenchFeet) * CONFIG.TRENCHING_PER_FT : 0) +
           (d.groundMount ? watts * CONFIG.GROUND_MOUNT_PER_W : 0) +
           (d.meterRelocation ? CONFIG.METER_RELOCATION : 0);
@@ -282,18 +334,30 @@ function adderTotal(d, watts) {
 }
 
 function computeDeal(d) {
-  var watts    = nonNeg(d.systemKw) * 1000;
-  var gross    = nonNeg(d.grossPPW) * watts;
-  var adders   = adderTotal(d, watts);
-  var stackRaw = gross - (watts * CONFIG.BASELINE_PPW) - adders;
-  var stack    = Math.max(0, stackRaw);
+  var sunstone = (d.mode === 'sunstone');
+  var byTotal  = sunstone && (d.ssEntry === 'total');
+
+  var watts  = nonNeg(d.systemKw) * 1000;
+  var kw     = nonNeg(d.systemKw);
+  var adders, stackRaw;
+
+  if (byTotal) {
+    // Sunstone's number already has adders out and sits at their floor, so the
+    // only deduction is the per-kW withhold that lifts it to the baseline.
+    adders   = 0;
+    stackRaw = nonNeg(d.ssTotal) - (kw * CONFIG.SUNSTONE.WITHHOLD_PER_KW);
+  } else {
+    adders   = adderTotal(d, watts, sunstone);
+    stackRaw = (nonNeg(d.grossPPW) * watts) - (watts * CONFIG.BASELINE_PPW) - adders;
+  }
+  var stack = Math.max(0, stackRaw);
 
   var total = round2(stack * roleShare(d.role, shares(d)));
   var m2    = round2(total * CONFIG.M2_PCT);
   var m3    = round2(total - m2);   // remainder, so M2 + M3 === Total exactly
 
-  return { watts: watts, totalAdders: adders, stackRaw: stackRaw, stack: stack,
-           total: total, m2: m2, m3: m3 };
+  return { watts: watts, byTotal: byTotal, totalAdders: adders,
+           stackRaw: stackRaw, stack: stack, total: total, m2: m2, m3: m3 };
 }
 
 /* ---------- UI ---------- */
@@ -304,8 +368,39 @@ if (typeof document !== 'undefined') {
   };
 
   var state = { mpu: 0, trench: 0, gm: 0, meter: 0, qbe: 0,
-                housing: null, split: null, role: 'closer' };
+                housing: null, split: null, role: 'closer',
+                mode: 'standard', ssEntry: 'total' };
   var FORCED = { housing: 1, split: 1 };
+
+  function applyMode() {
+    var ss      = (state.mode === 'sunstone');
+    var byTotal = ss && state.ssEntry === 'total';
+    $('ssEntryRow').classList.toggle('hidden', !ss);
+    $('ssTotalField').classList.toggle('hidden', !byTotal);
+    $('ppwField').classList.toggle('hidden', byTotal);
+    $('ssTotalHint').classList.toggle('hidden', !byTotal);
+    $('addersCard').classList.toggle('hidden', byTotal);
+    $('stdBatteries').classList.toggle('hidden', ss);
+    $('ssBatteryField').classList.toggle('hidden', !ss);
+  }
+
+  $('modeTabs').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    $('modeTabs').querySelectorAll('button').forEach(function (x) { x.classList.remove('on'); });
+    b.classList.add('on');
+    state.mode = b.dataset.mode;
+    applyMode();
+    render();
+  });
+
+  $('ssEntrySeg').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    $('ssEntrySeg').querySelectorAll('button').forEach(function (x) { x.classList.remove('on'); });
+    b.classList.add('on');
+    state.ssEntry = b.dataset.ss;
+    applyMode();
+    render();
+  });
 
   document.querySelectorAll('.seg').forEach(function (seg) {
     if (!seg.dataset.toggle) return;
@@ -347,11 +442,13 @@ if (typeof document !== 'undefined') {
   });
 
   $('reset').addEventListener('click', function () {
-    ['ppw', 'kw'].forEach(function (id) { $(id).value = ''; });
-    ['pw', 'qc', 'trenchFt'].forEach(function (id) { $(id).value = '0'; });
+    ['ppw', 'kw', 'ssTotal'].forEach(function (id) { $(id).value = ''; });
+    ['pw', 'qc', 'ssBatt', 'trenchFt'].forEach(function (id) { $(id).value = '0'; });
     $('customList').innerHTML = '';
     state = { mpu: 0, trench: 0, gm: 0, meter: 0, qbe: 0,
-              housing: null, split: null, role: 'closer' };
+              housing: null, split: null, role: 'closer',
+              mode: state.mode, ssEntry: state.ssEntry };
+    applyMode();
     document.querySelectorAll('.seg').forEach(function (seg) {
       if (!seg.dataset.toggle) return;
       var forced = FORCED[seg.dataset.toggle];
@@ -376,6 +473,10 @@ if (typeof document !== 'undefined') {
       customs.push({ description: r.querySelector('.desc').value, amount: r.querySelector('.amt').value });
     });
     return {
+      mode: state.mode,
+      ssEntry: state.ssEntry,
+      ssTotal: $('ssTotal').value,
+      ssBatteries: $('ssBatt').value,
       grossPPW: $('ppw').value,
       systemKw: $('kw').value,
       powerwalls: $('pw').value,
@@ -418,15 +519,19 @@ if (typeof document !== 'undefined') {
     $('needPick').textContent = ok ? '' : 'Choose ' + need.join(' and ') + ' to see your commission.';
     $('needPick').classList.toggle('hidden', ok);
 
+    var entered = r.byTotal ? nonNeg(d.ssTotal) : nonNeg(d.grossPPW);
     var w = $('warn');
-    if (ok && r.watts > 0 && nonNeg(d.grossPPW) > 0 && r.stackRaw <= 0) {
-      w.textContent = 'This deal does not generate commission as priced. Raise the PPW or reduce adders.';
+    if (ok && r.watts > 0 && entered > 0 && r.stackRaw <= 0) {
+      w.textContent = r.byTotal
+        ? 'This commission does not clear on a system this size, so it pays nothing. Double-check the system size and the number Sunstone gave you.'
+        : 'This deal does not generate commission as priced. Raise the PPW or reduce adders.';
       w.classList.remove('hidden');
     } else {
       w.classList.add('hidden');
     }
   }
 
+  applyMode();
   render();
 }
 
