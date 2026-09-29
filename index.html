@@ -74,6 +74,11 @@
   .tabs button.on { background: var(--brand); border-color: var(--brand); color: #fff; }
   .foot { text-align: center; font-size: 12px; color: var(--muted); margin: 18px 0 8px; }
   .reset { background: none; border: 0; color: var(--brand); font-size: 13px; cursor: pointer; text-decoration: underline; }
+  .mgrlink { background: none; border: 0; color: #b6bec8; font-size: 12px; cursor: pointer; margin-left: 14px; }
+  .pw-row { display: flex; gap: 8px; }
+  .pw-row input { flex: 1; }
+  .pw-row button { border: 1px solid var(--line); background: var(--brand); color: #fff; border-radius: 8px; padding: 0 16px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .pwerr { color: #b42318; font-size: 13px; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -244,7 +249,36 @@
     <div class="warn hidden" id="warn"></div>
   </div>
 
-  <div class="foot"><button class="reset" id="reset">Reset calculator</button></div>
+  <div class="foot">
+    <button class="reset" id="reset">Reset calculator</button>
+    <button class="mgrlink" id="mgrLink">Manager</button>
+  </div>
+
+  <!-- ===== MANAGER (password protected) ===== -->
+  <div class="card hidden" id="mgrCard">
+    <h2>Manager Pay</h2>
+
+    <div id="mgrLock">
+      <div class="pw-row">
+        <input id="mgrPw" type="password" placeholder="Password" autocomplete="off">
+        <button type="button" id="mgrGo">Unlock</button>
+      </div>
+      <div class="pwerr hidden" id="mgrErr">Incorrect password.</div>
+    </div>
+
+    <div id="mgrPanel" class="hidden">
+      <div style="text-align:center">
+        <div class="cap" style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">Your Commission</div>
+        <div class="total" id="mgrTotal">$0.00</div>
+        <div class="milestones">
+          <div class="ms"><div class="lbl">M2 — 80%</div><div class="val" id="mgrM2">$0.00</div></div>
+          <div class="ms"><div class="lbl">M3 — 20%</div><div class="val" id="mgrM3">$0.00</div></div>
+        </div>
+        <div class="note" id="mgrNote"></div>
+      </div>
+      <div class="foot" style="text-align:left"><button class="reset" id="mgrLockBtn">Lock</button></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -260,6 +294,9 @@ var CONFIG = {
   SALES_ORG_PCT:  0.60,   // closer + setter together
   HOUSING_PCT:    0.18,   // moves to the sales org on a self-generated lead
   RECRUITER_PCT:  0.02,
+  MANAGER_PCT:    0.04,   // shown only behind the Manager password below
+
+  MANAGER_PASSWORD: 'sbmanager',
 
   SPLIT_EVEN:   { closer: 0.50, setter: 0.50 },   // "50/50" toggle = Yes
   SPLIT_TIERED: { closer: 0.60, setter: 0.40 },   // "50/50" toggle = No
@@ -441,6 +478,55 @@ if (typeof document !== 'undefined') {
     row.querySelector('.desc').focus();
   });
 
+  /* --- manager gate --- */
+  var mgrUnlocked = false;
+
+  $('mgrLink').addEventListener('click', function () {
+    var c = $('mgrCard');
+    c.classList.toggle('hidden');
+    if (!c.classList.contains('hidden')) {
+      if (!mgrUnlocked) $('mgrPw').focus();
+      c.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+
+  function mgrTryUnlock() {
+    if ($('mgrPw').value === CONFIG.MANAGER_PASSWORD) {
+      mgrUnlocked = true;
+      $('mgrLock').classList.add('hidden');
+      $('mgrPanel').classList.remove('hidden');
+      $('mgrErr').classList.add('hidden');
+      $('mgrPw').value = '';
+      render();
+    } else {
+      $('mgrErr').classList.remove('hidden');
+    }
+  }
+  $('mgrGo').addEventListener('click', mgrTryUnlock);
+  $('mgrPw').addEventListener('keydown', function (e) { if (e.key === 'Enter') mgrTryUnlock(); });
+
+  $('mgrLockBtn').addEventListener('click', function () {
+    mgrUnlocked = false;
+    $('mgrPanel').classList.add('hidden');
+    $('mgrLock').classList.remove('hidden');
+    $('mgrCard').classList.add('hidden');
+  });
+
+  // Manager pay is a flat rate on the deal, so it doesn't wait on the housing
+  // or split answers the way closer/setter pay does.
+  function renderManager(d, r) {
+    if (!mgrUnlocked) return;
+    var total = round2(r.stack * CONFIG.MANAGER_PCT);
+    var m2 = round2(total * CONFIG.M2_PCT);
+    var m3 = round2(total - m2);
+    $('mgrTotal').textContent = money(total);
+    $('mgrM2').textContent = money(m2);
+    $('mgrM3').textContent = money(m3);
+    $('mgrNote').textContent = r.watts > 0
+      ? ''
+      : 'Enter the deal above to see your pay.';
+  }
+
   $('reset').addEventListener('click', function () {
     ['ppw', 'kw', 'ssTotal'].forEach(function (id) { $(id).value = ''; });
     ['pw', 'qc', 'ssBatt', 'trenchFt'].forEach(function (id) { $(id).value = '0'; });
@@ -529,6 +615,8 @@ if (typeof document !== 'undefined') {
     } else {
       w.classList.add('hidden');
     }
+
+    renderManager(d, r);
   }
 
   applyMode();
