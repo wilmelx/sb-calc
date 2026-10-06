@@ -95,7 +95,15 @@
   <div class="card">
     <h2>Deal Information</h2>
 
-    <div class="toggle-row hidden" id="ssEntryRow" style="border-top:0;padding-top:0">
+    <div class="toggle-row" style="border-top:0;padding-top:0">
+      <span class="name">State</span>
+      <span class="seg" id="stateSeg">
+        <button type="button" data-state="standard" class="on">Default</button>
+        <button type="button" data-state="il">Illinois</button>
+      </span>
+    </div>
+
+    <div class="toggle-row hidden" id="ssEntryRow">
       <span class="name">What do you have?</span>
       <span class="seg" id="ssEntrySeg">
         <button type="button" data-ss="total" class="on">Total commissions</button>
@@ -276,7 +284,8 @@
    Fund, or the platform/manager allocations.
    ============================================================ */
 var CONFIG = {
-  BASELINE_PPW:   2.50,   // $/W the commissionable stack is priced from
+  BASELINE_PPW:    2.50,  // $/W the commissionable stack is priced from
+  IL_BASELINE_PPW: 2.35,  // Illinois runs a lower baseline
 
   SALES_ORG_PCT:  0.60,   // closer + setter together
   RECRUITER_PCT:  0.02,
@@ -322,6 +331,12 @@ function shares(d) {
     setter:    pool * ratio.setter,
     recruiter: CONFIG.RECRUITER_PCT
   };
+}
+
+// Illinois prices the stack from a lower baseline, which makes the stack bigger
+// and every role's payout proportionally larger.
+function baselineFor(stateKey) {
+  return (stateKey === 'il') ? CONFIG.IL_BASELINE_PPW : CONFIG.BASELINE_PPW;
 }
 
 function powerwallCost(n) {
@@ -371,7 +386,7 @@ function computeDeal(d) {
     stackRaw = nonNeg(d.ssTotal) - (kw * CONFIG.SUNSTONE.WITHHOLD_PER_KW);
   } else {
     adders   = adderTotal(d, watts, sunstone);
-    stackRaw = (nonNeg(d.grossPPW) * watts) - (watts * CONFIG.BASELINE_PPW) - adders;
+    stackRaw = (nonNeg(d.grossPPW) * watts) - (watts * baselineFor(d.stateKey)) - adders;
   }
   var stack = Math.max(0, stackRaw);
 
@@ -392,8 +407,16 @@ if (typeof document !== 'undefined') {
 
   var state = { mpu: 0, trench: 0, gm: 0, meter: 0, qbe: 0,
                 split: null, role: 'closer',
-                mode: 'standard', ssEntry: 'total' };
+                mode: 'standard', ssEntry: 'total', stateKey: 'standard' };
   var FORCED = { split: 1 };
+
+  $('stateSeg').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    $('stateSeg').querySelectorAll('button').forEach(function (x) { x.classList.remove('on'); });
+    b.classList.add('on');
+    state.stateKey = b.dataset.state;
+    render();
+  });
 
   function applyMode() {
     var ss      = (state.mode === 'sunstone');
@@ -518,7 +541,7 @@ if (typeof document !== 'undefined') {
     $('customList').innerHTML = '';
     state = { mpu: 0, trench: 0, gm: 0, meter: 0, qbe: 0,
               split: null, role: 'closer',
-              mode: state.mode, ssEntry: state.ssEntry };
+              mode: state.mode, ssEntry: state.ssEntry, stateKey: state.stateKey };
     applyMode();
     document.querySelectorAll('.seg').forEach(function (seg) {
       if (!seg.dataset.toggle) return;
@@ -544,6 +567,7 @@ if (typeof document !== 'undefined') {
     });
     return {
       mode: state.mode,
+      stateKey: state.stateKey,
       ssEntry: state.ssEntry,
       ssTotal: $('ssTotal').value,
       ssBatteries: $('ssBatt').value,
