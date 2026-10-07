@@ -88,8 +88,10 @@
   <p class="sub">Enter your deal to see your payout.</p>
 
   <div class="tabs" id="modeTabs">
-    <button type="button" data-mode="standard" class="on">Standard</button>
+    <button type="button" data-mode="axia" class="on">Axia</button>
     <button type="button" data-mode="sunstone">Sunstone</button>
+    <button type="button" data-mode="betterEarth">Better Earth</button>
+    <button type="button" data-mode="peak">Peak</button>
   </div>
 
   <div class="card">
@@ -284,8 +286,16 @@
    Fund, or the platform/manager allocations.
    ============================================================ */
 var CONFIG = {
-  BASELINE_PPW:    2.50,  // $/W the commissionable stack is priced from
-  IL_BASELINE_PPW: 2.35,  // Illinois runs a lower baseline
+  // Baseline is the $/W the rep's commissionable stack is priced from.
+  // It varies by installer.
+  INSTALLERS: {
+    axia:        { label: 'Axia',         baseline: 2.50 },
+    sunstone:    { label: 'Sunstone',     baseline: 2.50 },
+    betterEarth: { label: 'Better Earth', baseline: 2.50 },
+    peak:        { label: 'Peak',         baseline: 2.75 }
+  },
+  DEFAULT_INSTALLER: 'axia',
+  IL_BASELINE_PPW:   2.35,   // Illinois (Axia only) overrides the above
 
   SALES_ORG_PCT:  0.60,   // closer + setter together
   RECRUITER_PCT:  0.02,
@@ -333,10 +343,12 @@ function shares(d) {
   };
 }
 
-// Illinois prices the stack from a lower baseline, which makes the stack bigger
-// and every role's payout proportionally larger.
-function baselineFor(stateKey) {
-  return (stateKey === 'il') ? CONFIG.IL_BASELINE_PPW : CONFIG.BASELINE_PPW;
+// Baseline depends on the installer, and Illinois overrides it entirely
+// (Illinois is Axia only).
+function baselineFor(instKey, stateKey) {
+  if (stateKey === 'il') return CONFIG.IL_BASELINE_PPW;
+  var i = CONFIG.INSTALLERS[instKey] || CONFIG.INSTALLERS[CONFIG.DEFAULT_INSTALLER];
+  return i.baseline;
 }
 
 function powerwallCost(n) {
@@ -386,7 +398,7 @@ function computeDeal(d) {
     stackRaw = nonNeg(d.ssTotal) - (kw * CONFIG.SUNSTONE.WITHHOLD_PER_KW);
   } else {
     adders   = adderTotal(d, watts, sunstone);
-    stackRaw = (nonNeg(d.grossPPW) * watts) - (watts * baselineFor(d.stateKey)) - adders;
+    stackRaw = (nonNeg(d.grossPPW) * watts) - (watts * baselineFor(d.mode, d.stateKey)) - adders;
   }
   var stack = Math.max(0, stackRaw);
 
@@ -407,7 +419,7 @@ if (typeof document !== 'undefined') {
 
   var state = { mpu: 0, trench: 0, gm: 0, meter: 0, qbe: 0,
                 split: null, role: 'closer',
-                mode: 'standard', ssEntry: 'total', stateKey: 'standard' };
+                mode: CONFIG.DEFAULT_INSTALLER, ssEntry: 'total', stateKey: 'standard' };
   var FORCED = { split: 1 };
 
   $('stateSeg').addEventListener('click', function (e) {
@@ -415,6 +427,13 @@ if (typeof document !== 'undefined') {
     $('stateSeg').querySelectorAll('button').forEach(function (x) { x.classList.remove('on'); });
     b.classList.add('on');
     state.stateKey = b.dataset.state;
+    if (state.stateKey === 'il') {       // Illinois is Axia only
+      state.mode = 'axia';
+      $('modeTabs').querySelectorAll('button').forEach(function (x) {
+        x.classList.toggle('on', x.dataset.mode === 'axia');
+      });
+    }
+    applyMode();
     render();
   });
 
@@ -428,6 +447,15 @@ if (typeof document !== 'undefined') {
     $('addersCard').classList.toggle('hidden', byTotal);
     $('stdBatteries').classList.toggle('hidden', ss);
     $('ssBatteryField').classList.toggle('hidden', !ss);
+
+    // Illinois is Axia only — grey out the other installers.
+    var il = (state.stateKey === 'il');
+    $('modeTabs').querySelectorAll('button').forEach(function (x) {
+      var off = il && x.dataset.mode !== 'axia';
+      x.disabled = off;
+      x.style.opacity = off ? '0.35' : '';
+      x.style.cursor = off ? 'not-allowed' : 'pointer';
+    });
   }
 
   $('modeTabs').addEventListener('click', function (e) {
@@ -550,6 +578,7 @@ if (typeof document !== 'undefined') {
         b.classList.toggle('on', !forced && b.dataset.val === '0');
       });
     });
+    $('modeTabs').querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === state.mode); });
     $('roleSeg').querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b.dataset.role === 'closer'); });
     $('splitOnly').classList.remove('hidden');
     $('selfgenHint').classList.add('hidden');
